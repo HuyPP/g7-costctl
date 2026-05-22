@@ -53,17 +53,37 @@ The first time you run this, double-check against the AWS Console
 Output should match within a few cents.
 """
 import boto3
-from collections import defaultdict
 from datetime import date, timedelta
 
 from commands._common import parse_kv
 
 
 def run(args):
-    """Entry point.
+    key, value = parse_kv(args.tag)
 
-    Args set by argparse:
-        args.tag   — "key=value" string (REQUIRED)
-        args.days  — int, default 7
-    """
-    raise NotImplementedError("TODO: implement cost — see module docstring")
+    end = date.today()
+    start = end - timedelta(days=args.days)
+
+    ce = boto3.client("ce", region_name="us-east-1")
+
+    response = ce.get_cost_and_usage(
+        TimePeriod={
+            "Start": start.isoformat(),
+            "End": end.isoformat(),
+        },
+        Granularity="MONTHLY",
+        Metrics=["UnblendedCost"],
+        Filter={
+            "Tags": {
+                "Key": key,
+                "Values": [value],
+            }
+        },
+    )
+
+    amount = response["ResultsByTime"][0]["Total"]["UnblendedCost"]["Amount"]
+    unit = response["ResultsByTime"][0]["Total"]["UnblendedCost"]["Unit"]
+
+    print(
+        f"Cost for {key}={value} over last {args.days} day(s): {amount} {unit}"
+    )

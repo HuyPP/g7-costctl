@@ -46,9 +46,50 @@ from commands._common import parse_kv
 
 def _find_targets(tag_key, tag_val):
     """Return {"ec2": [...], "volume": [...]} matching tag in non-terminal state."""
-    raise NotImplementedError("TODO: implement _find_targets — see test_clean.py")
+    ec2 = boto3.client("ec2", region_name="us-east-1")
 
+    targets = {
+        "ec2": [],
+        "volume": [],
+    }
 
+    reservations = ec2.describe_instances()["Reservations"]
+
+    for reservation in reservations:
+        for instance in reservation["Instances"]:
+
+            state = instance["State"]["Name"]
+
+            if state in ["terminated", "shutting-down"]:
+                continue
+
+            tags = {
+                t["Key"]: t["Value"]
+                for t in instance.get("Tags", [])
+            }
+
+            if tags.get(tag_key) == tag_val:
+                targets["ec2"].append(instance["InstanceId"])
+
+    volumes = ec2.describe_volumes()["Volumes"]
+
+    for volume in volumes:
+
+        tags = {
+            t["Key"]: t["Value"]
+            for t in volume.get("Tags", [])
+        }
+
+        if tags.get(tag_key) == tag_val:
+            targets["volume"].append(volume["VolumeId"])
+
+    return targets
+DISPATCH = {
+    "ec2": _list_ec2,
+    "rds": _list_rds,
+    "s3": _list_s3,
+    "volume": _list_volume,
+}
 def run(args):
     """Entry point.
 
@@ -56,4 +97,39 @@ def run(args):
         args.tag    — "key=value" string (REQUIRED)
         args.apply  — bool, must be True to actually delete (default False = dry-run)
     """
-    raise NotImplementedError("TODO: implement run() — see module docstring")
+    key, value = args.tag.split("=", 1)
+
+    targets = _find_targets(key, value)
+
+    total = len(targets["ec2"]) + len(targets["volume"])
+
+    if total == 0:
+        print("Nothing to clean")
+        return
+
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+
+    if not args.apply:
+        print("dry-run")
+
+        for iid in targets["ec2"]:
+            print(f"Would terminate EC2 {iid}")
+
+        for vid in targets["volume"]:
+            print(f"Would delete volume {vid}")
+
+        return
+
+    for iid in targets["ec2"]:
+        ec2.terminate_instances(
+            InstanceIds=[iid]
+        )
+
+        print(f"Terminated EC2 {iid}")
+
+    for vid in targets["volume"]:
+        ec2.delete_volume(
+            VolumeId=vid
+        )
+
+        print(f"Deleted volume {vid}")
